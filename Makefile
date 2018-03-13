@@ -2,8 +2,8 @@
 VERSION = 4
 PATCHLEVEL = 15
 SUBLEVEL = 0
-EXTRAVERSION =
-NAME = Fearless Coyote
+EXTRAVERSION = -4.15.0-cmsc421project1-hwu2
+NAME = Hongkun Wu
 
 # *DOCUMENTATION*
 # To see a list of typical targets execute "make help"
