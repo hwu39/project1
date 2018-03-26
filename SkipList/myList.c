@@ -124,7 +124,7 @@ node* insert(node* head, unsigned int id)
   return head;
 }
 
-
+/*
 //Initializes the mailbox system, setting up the initial state of the skip list. The ptrs parameter specifies the maximum number of pointers any node in the list will be allowed to have.
 long slmbx_init(unsigned int ptrs, unsigned int prob)
 {
@@ -192,3 +192,4 @@ int main() {
   dump(head);
   return 0;
 }
+*/
