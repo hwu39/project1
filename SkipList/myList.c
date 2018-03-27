@@ -1,10 +1,13 @@
-#include <errno.h>
 #include <linux/kernel.h>
 #include <stdlib.h>
 #include <linux/string.h>
 #include <stdio.h>
 #include <unistd.h>
 #include <time.h>
+#include <linux/string.h>
+#include <linux/errno.h>
+
+
 static unsigned int generate_random_int(void);
 
 static unsigned int next_random = 9001;
@@ -124,7 +127,7 @@ node* insert(node* head, unsigned int id)
   return head;
 }
 
-/*
+
 //Initializes the mailbox system, setting up the initial state of the skip list. The ptrs parameter specifies the maximum number of pointers any node in the list will be allowed to have.
 long slmbx_init(unsigned int ptrs, unsigned int prob)
 {
@@ -192,4 +195,4 @@ int main() {
   dump(head);
   return 0;
 }
-*/
+
