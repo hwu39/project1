@@ -7,7 +7,10 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 
+unsigned int MaxLevel;
 
+unsigned int MaxPtr = 4294967295; //2 to 32 minus 1
+  
 static unsigned int generate_random_int(void);
 
 static unsigned int next_random = 9001;
@@ -30,8 +33,8 @@ typedef struct Qnode{
 
 //queue list
 typedef struct queue{
-  struct Qnode* head;
-  struct Qnode* tail;
+  struct Qnode* front;
+  struct Qnode* back;
 }queue;
 
 //skiplist node
@@ -39,7 +42,7 @@ typedef struct node {
   unsigned long size; //size of message
   unsigned int id;
   struct queue *msg;
-  struct node *next;
+  struct node **next;
   //struct node *prev;
 }node;
 
@@ -50,83 +53,47 @@ typedef struct skiplist{
   struct ndoe* stail;
 }skiplist;
 
+skiplist* list;
 //node *create(char *data, node* next);
 //node *prepend(node* head, char *data);
 
-//create new node to carry message
-node *create(unsigned int id, node* next) {
-  node *temp = (node*)malloc(sizeof(node));
-  if (temp == NULL) {
-    printf("Error! Can't create new node!\n");
-    exit(0);
-  }
-  temp->id = id;
-  temp->next = next;
-
-  return temp;
-}
-
-void dump(struct node *head) {
-  struct node *temp = (node*)malloc(sizeof(node));
-  temp = head;
-  /*
-  while (temp != NULL) {
-    printf("%d ",temp->id);
-    temp = temp->next;
-  }
-  */
-  printf("\n");
-}
-
-//point next pointer of new node to the head
-node *prepend(node *head, unsigned int id){
-  node *temp = create(id,head);
-  head = temp;
-  return head;
-}
-
 node* insert(node* head, unsigned int id)
 {
+  
   //check if head can be found
   if (head == NULL) {
     head = malloc(sizeof(node));
-    if (head == NULL) {
-      printf("Cannot create head node\n");
-      return head;
-    }
     head->id = id;
     head->next = NULL;
     return head;
   }
-
-  //create new node
-  node *newNode;
-  newNode = malloc(sizeof(node));
-  if(newNode == NULL) {
-    printf("Cannot create node\n");
-    return newNode;
+  else {
+    
+    //create new node
+    node *newNode = (node*)malloc(sizeof(node));
+    newNode->id = id;
+    newNode->next = NULL;
+    
+    //check order
+    if (id < head->id) {
+      newNode->next = head;    
+      head = newNode;
+      return head;
+    }
+    else {
+      //iterate through linked list to insert at correct spot
+      node *curr, *prev; 
+      curr = head;
+      while (curr != NULL && curr->id <= id) {
+	prev = curr;
+	curr = curr->next;
+      }
+      newNode->next = curr;
+      prev->next = newNode;
+      return head;  
+    }
   }
-
-  //check order
-  if (id < head->id) {
-    newNode->next = head;
-    return newNode;
-  }
-
-  //iterate through linked list to insert at correct spot
-  node* temp, *prev;
-  temp = head->next;
-  prev = head;
-  while (temp != NULL && temp->id < id) {
-    prev = temp;
-    temp = temp->next;
-  }
-  newNode->next = temp;
-  prev->next = newNode;
-
-  return head;
 }
-
 
 //Initializes the mailbox system, setting up the initial state of the skip list. The ptrs parameter specifies the maximum number of pointers any node in the list will be allowed to have.
 long slmbx_init(unsigned int ptrs, unsigned int prob)
@@ -134,22 +101,35 @@ long slmbx_init(unsigned int ptrs, unsigned int prob)
   if (prob % 2 != 0 && (prob != 2 || prob != 4 || prob != 8 || prob != 16)) {
     return -EINVAL;
   }
-  if (ptrs == 0) {
+  if (ptrs == 0 || ptrs >= MaxPtr) {
     return -EINVAL;
   }
-  struct skiplist *slist = (skiplist*)malloc(sizeof(skiplist));
+  MaxLevel = ptrs;
+  node *header = (node*)malloc(sizeof(struct node));
+  list->shead = header;
+  header->id = (2 << 29) - 1;
+  header->next = (node**)malloc(sizeof(node*) * (MaxLevel + 1));
+  int i;
+  for (i=0; i <= MaxLevel; i++) {
+    header->next[i] = list->shead;
+  }
+
+  list->level = 1;
+  list->size = 0;
+
+  return 0;
 }
 
 //Shuts down the mailbox system, deleting all existing mailboxes and any messages contained therein. Returns 0 on success. Only the root user should be allowed to call this function.
 long slmbx_shutdown(void)
 {
-
+  
 }
 
 //Creates a new mailbox with the given id if it does not already exist (no duplicates are allowed).
 long slmbx_create(unsigned int id, int protected)
 {
-
+  
 }
 
 //Deletes the mailbox identified by id if it exists and the user has permission to do so. If the mailbox has any messages stored in it, these messages should be deleted. Returns 0 on success or an appropriate error code on failure.
@@ -190,9 +170,21 @@ int main() {
   //examine random functionality
   printf("%u\n", random_num);
   //simple skiplist implementation
-  unsigned int a = 10;
-  struct node *head = prepend(head, a);
-  dump(head);
+  node *head = NULL;
+  head = insert(head, 100);
+  head = insert(head,20);
+  head = insert(head,40);
+  head = insert(head,30);
+  node *temp = head;
+  printf("%u ",temp->id);
+  temp = temp->next;
+  printf("%u ",temp->id);
+  temp = temp->next;
+  printf("%u ",temp->id);
+  temp = temp->next;
+  printf("%u ",temp->id);
+  printf("\n");
+
   return 0;
 }
 
