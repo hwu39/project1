@@ -9,11 +9,14 @@
 
 unsigned int MaxLevel;
 
-unsigned int MaxPtr = 4294967295; //2 to 32 minus 1
+unsigned int MaxPtr = 4294967295; //max number of pointers 2 to the 32 minus 1
+unsigned int MaxID = 4294967295; //max id 2 to the 32 minus 1
   
 static unsigned int generate_random_int(void);
 
 static unsigned int next_random = 9001;
+
+static unsigned int max_rand = 32768;
 
 static unsigned int generate_random_int(void) {
     next_random = next_random * 1103515245 + 12345;
@@ -52,7 +55,7 @@ typedef struct skiplist{
   struct node* shead;
   struct ndoe* stail;
 }skiplist;
-
+//global list
 skiplist* list;
 //node *create(char *data, node* next);
 //node *prepend(node* head, char *data);
@@ -98,26 +101,39 @@ node* insert(node* head, unsigned int id)
 //Initializes the mailbox system, setting up the initial state of the skip list. The ptrs parameter specifies the maximum number of pointers any node in the list will be allowed to have.
 long slmbx_init(unsigned int ptrs, unsigned int prob)
 {
-  if (prob % 2 != 0 && (prob != 2 || prob != 4 || prob != 8 || prob != 16)) {
+  if (prob == 2 || prob == 4 ||prob == 8 || prob == 16) {
+    MaxLevel = ptrs;
+  }
+  else {
     return -EINVAL;
   }
   if (ptrs == 0 || ptrs >= MaxPtr) {
     return -EINVAL;
   }
-  MaxLevel = ptrs;
+  list = malloc(sizeof(skiplist));
   node *header = (node*)malloc(sizeof(struct node));
+  list->shead = malloc(sizeof(node));
   list->shead = header;
-  header->id = (2 << 29) - 1;
+  header->id = MaxPtr;
   header->next = (node**)malloc(sizeof(node*) * (MaxLevel + 1));
   int i;
   for (i=0; i <= MaxLevel; i++) {
     header->next[i] = list->shead;
   }
 
-  list->level = 1;
+  list->level = MaxLevel;
   list->size = 0;
 
   return 0;
+}
+
+static int rand_level()
+{
+  int level = 1;
+  while (generate_random_int() < max_rand/2 && level < MaxLevel) {
+    level++;
+  }
+  return level;
 }
 
 //Shuts down the mailbox system, deleting all existing mailboxes and any messages contained therein. Returns 0 on success. Only the root user should be allowed to call this function.
@@ -129,19 +145,95 @@ long slmbx_shutdown(void)
 //Creates a new mailbox with the given id if it does not already exist (no duplicates are allowed).
 long slmbx_create(unsigned int id, int protected)
 {
-  
+  if (id == 0 || id >= MaxID) {
+    return -EINVAL;
+  }
+  if (list == NULL) {
+    return -ENODEV;
+  }
+
+  int i, level;
+  //skiplist node as a dynamically allocated array
+
+  node *new[MaxLevel + 1];
+  node *temp = list->shead;
+  //iterate through skiplist from top to bottom
+  for (i=MaxLevel; i>0; i--) {
+    while (temp->next[i]->id < id) {
+      temp = temp->next[i];
+    }
+    new[i] = temp;
+  }
+
+  temp = temp->next[1];
+  //return error if id already exists
+  if (temp->id == id) {
+    return -EEXIST;
+  }
+  else {
+    level = rand_level();
+    if (list->level < level) {
+      for(i=(list->level + 1); i<(level + 1); i++){
+	new[i] = list->shead;
+      }
+      list->level = level;
+    }
+    //insert node into skiplist
+    temp = insert(temp, id);
+    
+    //insert a number of nodes for that column determined by level
+    for (i = 1; i<level; i++) {
+      temp->next[i] = new[i]->next[i];
+      new[i]->next[i] = temp;
+    }
+
+    //create mailbox queue
+    queue *message = (queue*)malloc(sizeof(queue));
+    temp->msg = message;
+    temp->msg->front = NULL;
+    temp->msg->back = NULL;
+    
+  }
+  return 0;
 }
 
 //Deletes the mailbox identified by id if it exists and the user has permission to do so. If the mailbox has any messages stored in it, these messages should be deleted. Returns 0 on success or an appropriate error code on failure.
 long slmbx_destroy(unsigned int id)
 {
-
+  int i;
+  node *new[MaxLevel+1], *temp = list->shead;
+  for (i=list->level; i>0; i--){
+    while (temp->next[i] && temp->next[i]->id < id) {
+      temp = temp->next[i];
+    }
+    new[i] = temp;
+  }
+  temp = temp->next[1];
+  if (temp->id == id && temp) {
+    for (i=1; i<list->level+1; i++) {
+      if(new[i]->next[i] != temp) {
+	break;
+      }
+      new[i]->next[i] = temp->next[i];
+    }
+    if(temp) {
+      free(temp->next);
+      free(temp);
+    }
+    while (list->level > 1 && list->shead->next[list->level] == list->shead) {
+      list->level--;
+      //success
+      return 0;
+    }
+  }
+  //mailbox not found
+  return -ENOENT;
 }
 
 //Returns the number of messages in the mailbox identified by id if it exists and the user has permission to access it. Returns an appropriate error code on failure.
 long slmbx_count(unsigned int id)
 {
-
+  
 }
 
 //Sends a new message to the mailbox identified by id if it exists and the user has access to it. The message shall be read from the user-space pointer msg and shall be len bytes long. Returns 0 on success or an appropriate error code on failure.
@@ -172,8 +264,8 @@ int main() {
   //simple skiplist implementation
   node *head = NULL;
   head = insert(head, 100);
-  head = insert(head,20);
-  head = insert(head,40);
+  head = insert(head,50);
+  head = insert(head,10);
   head = insert(head,30);
   node *temp = head;
   printf("%u ",temp->id);
@@ -184,7 +276,17 @@ int main() {
   temp = temp->next;
   printf("%u ",temp->id);
   printf("\n");
-
+  //test init
+  long init;
+  init = slmbx_init(2,2);
+  printf("%s\n",strerror(-init));
+  init = slmbx_init(0,2);
+  printf("%s\n",strerror(-init));
+  //test create
+  long create;
+  create = slmbx_create(2,0);
+  printf("%s\n",strerror(-create));
+  
   return 0;
 }
 
