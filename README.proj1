@@ -1,0 +1,8 @@
+In user space, I created myList.c including all the functions. Before implementing send and recv, I was able to add nodes and messages. After send and recv are implemented, I started getting segmentation faults and was not able to find out the cause. 
+
+In kernel space, created kernel_myList.c. I could not my insert function because it kept saying incompatile points while they were working in userspace. Access permission and mutex locks are added to all functions in kernel.
+
+test file for userspace c file is the main function.
+
+test file for kernel_myList.c is test.c
+

@@ -1,22 +1,29 @@
 #include <linux/kernel.h>
-#include <stdlib.h>
 #include <linux/string.h>
-#include <stdio.h>
-#include <unistd.h>
-#include <time.h>
+#include <linux/unistd.h>
+#include <linux/time.h>
 #include <linux/string.h>
 #include <linux/errno.h>
+#include <linux/uidgid.h>
+#include <linux/cred.h>
+#include <linux/slab.h>
+#include <linux/mutex.h>
+#include <linux/printk.h>
 
-void dump();
-long slmbx_init(unsigned int ptrs, unsigned int prob);
-static int rand_level();
-long slmbx_shutdown(void);
-long slmbx_create(unsigned int id, int protected);
-long slmbx_destroy(unsigned int id);
-long slmbx_count(unsigned int id);
-long slmbx_send(unsigned int id, const unsigned char *msg, unsigned int len);
-long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len);
-long slmbx_length(unsigned int id);
+struct mutex lock;
+
+DEFINE_MUTEX(lock);
+
+void dump(void);
+asmlinkage long slmbx_init(unsigned int ptrs, unsigned int prob);
+static int rand_level(void);
+asmlinkage long slmbx_shutdown(void);
+asmlinkage long slmbx_create(unsigned int id, int protected);
+asmlinkage long slmbx_destroy(unsigned int id);
+asmlinkage long slmbx_count(unsigned int id);
+asmlinkage long slmbx_send(unsigned int id, const unsigned char *msg, unsigned int len);
+asmlinkage long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len);
+asmlinkage long slmbx_length(unsigned int id);
 
 unsigned int MaxLevel;
 
@@ -38,6 +45,9 @@ static void seed_random(unsigned int seed) {
     next_random = seed;
 }
 
+//get id
+uid_t getuid(void);
+
 //queue node
 typedef struct Qnode{
   unsigned char* data;
@@ -56,6 +66,7 @@ typedef struct node {
   unsigned long size; //size of message
   unsigned int id;
   int protected;
+  unsigned int uid;
   struct queue *msg;
   struct node **next;
   //struct node *prev;
@@ -77,7 +88,7 @@ node* insert(node* head, unsigned int id)
   
   //check if head can be found
   if (head == NULL) {
-    head = malloc(sizeof(node));
+    head = kmalloc(sizeof(node),GFP_KERNEL);
     head->id = id;
     head->next = NULL;
     return head;
@@ -85,13 +96,13 @@ node* insert(node* head, unsigned int id)
   else {
     
     //create new node
-    node *newNode = (node*)malloc(sizeof(node));
+    node *newNode = kmalloc(sizeof(node*),GFP_KERNEL);
     newNode->id = id;
     newNode->next = NULL;
     
     //check order
     if (id < head->id) {
-      newNode->next = head;    
+      //newNode->next = head;    
       head = newNode;
       return head;
     }
@@ -101,27 +112,32 @@ node* insert(node* head, unsigned int id)
       curr = head;
       while (curr != NULL && curr->id <= id) {
 	prev = curr;
-	curr = curr->next;
+	//curr = curr->next;
       }
-      newNode->next = curr;
-      prev->next = newNode;
+      //newNode->next = curr;
+      //prev->next = newNode;
       return head;  
     }
   }
 }
 
-void dump() {
+void dump(void) {
   node *temp = list->shead;
   while (temp && temp->next[1] != list->shead) {
-    printf("%d %s  ",temp->next[1]->id, temp->next[1]->msg->front->data);
+    printk("%d %s  ",temp->next[1]->id, temp->next[1]->msg->front->data);
     temp = temp->next[1];
   }
-  printf("\n");
+  printk("\n");
 }
 
 //Initializes the mailbox system, setting up the initial state of the skip list. The ptrs parameter specifies the maximum number of pointers any node in the list will be allowed to have.
-long slmbx_init(unsigned int ptrs, unsigned int prob)
+asmlinkage long slmbx_init(unsigned int ptrs, unsigned int prob)
 {
+  node *header = kmalloc(sizeof(struct node),GFP_KERNEL);
+  int i;
+  if(current_uid().val != 0) {
+    return -EPERM;
+  }  
   if (prob == 2 || prob == 4 ||prob == 8 || prob == 16) {
     MaxLevel = ptrs;
   }
@@ -131,24 +147,25 @@ long slmbx_init(unsigned int ptrs, unsigned int prob)
   if (ptrs == 0 || ptrs >= MaxPtr) {
     return -EINVAL;
   }
-  list = malloc(sizeof(skiplist));
-  node *header = (node*)malloc(sizeof(struct node));
-  list->shead = malloc(sizeof(node));
+  mutex_lock(&lock);
+  list = kmalloc(sizeof(skiplist),GFP_KERNEL);
+  
+  list->shead = kmalloc(sizeof(node),GFP_KERNEL);
   list->shead = header;
   header->id = MaxPtr;
-  header->next = (node**)malloc(sizeof(node*) * (MaxLevel + 1));
-  int i;
+  header->next = (node**)kmalloc(sizeof(node*) * (MaxLevel + 1),GFP_KERNEL);
+  
   for (i=0; i <= MaxLevel; i++) {
     header->next[i] = list->shead;
   }
 
   list->level = MaxLevel;
   list->size++;
-
+  mutex_unlock(&lock);
   return 0;
 }
 
-static int rand_level()
+static int rand_level(void)
 {
   int level = 1;
   while (generate_random_int() < max_rand/2 && level < MaxLevel) {
@@ -158,25 +175,34 @@ static int rand_level()
 }
 
 //Shuts down the mailbox system, deleting all existing mailboxes and any messages contained therein. Returns 0 on success. Only the root user should be allowed to call this function.
-long slmbx_shutdown(void)
+asmlinkage long slmbx_shutdown(void)
 {
   node *curr = list->shead->next[1];
+  if(current_uid().val != 0) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   while(curr != list->shead) {
     node *temp = curr->next[1];
-    free(curr->next);
-    free(curr);
+    kfree(curr->next);
+    kfree(curr);
     curr = temp;
   }
-  free(curr->next);
-  free(curr);
-  free(list);
-  
+  kfree(curr->next);
+  kfree(curr);
+  kfree(list);
+  mutex_unlock(&lock);
   return 0;
 }
 
 //Creates a new mailbox with the given id if it does not already exist (no duplicates are allowed).
-long slmbx_create(unsigned int id, int protected)
+asmlinkage long slmbx_create(unsigned int id, int protected)
 {
+  int i, level;
+  node *new[MaxLevel + 1];
+  node *temp = list->shead;
+  queue *message = kmalloc(sizeof(queue),GFP_KERNEL);
+    
   if (id == 0 || id >= MaxID) {
     return -EINVAL;
   }
@@ -184,12 +210,12 @@ long slmbx_create(unsigned int id, int protected)
     return -ENODEV;
   }
 
-  int i, level;
+  
   //skiplist node as a dynamically allocated array
 
-  node *new[MaxLevel + 1];
-  node *temp = list->shead;
+  
   //iterate through skiplist from top to bottom
+  mutex_lock(&lock);
   for (i=MaxLevel; i>0; i--) {
     while (temp->next[i]->id < id) {
       temp = temp->next[i];
@@ -200,6 +226,7 @@ long slmbx_create(unsigned int id, int protected)
   temp = temp->next[1];
   //return error if id already exists
   if (temp->id == id) {
+    mutex_unlock(&lock);
     return -EEXIST;
   }
   else {
@@ -211,9 +238,11 @@ long slmbx_create(unsigned int id, int protected)
       list->level = level;
     }
     //insert node into skiplist
-    temp = malloc(sizeof(node));
+    temp = kmalloc(sizeof(node),GFP_KERNEL);
     temp->protected = protected;
-    temp = insert(temp, id);
+    temp->uid = current_uid().val;
+    temp->next = kmalloc(sizeof(node),GFP_KERNEL);
+    //temp = insert(temp, id);
         
     //insert a number of nodes for that column determined by level
     for (i = 1; i<level; i++) {
@@ -222,20 +251,24 @@ long slmbx_create(unsigned int id, int protected)
     }
 
     //create mailbox queue
-    queue *message = (queue*)malloc(sizeof(queue));
     temp->msg = message;
     temp->msg->front = NULL;
     temp->msg->back = NULL;
     
   }
+  mutex_unlock(&lock);
   return 0;
 }
 
 //Deletes the mailbox identified by id if it exists and the user has permission to do so. If the mailbox has any messages stored in it, these messages should be deleted. Returns 0 on success or an appropriate error code on failure.
-long slmbx_destroy(unsigned int id)
+asmlinkage long slmbx_destroy(unsigned int id)
 {
   int i;
   node *new[MaxLevel+1], *temp = list->shead;
+  if (temp->protected != 0 || temp->uid != current_uid().val) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   for (i=list->level; i>0; i--){
     while (temp->next[i] && temp->next[i]->id < id) {
       temp = temp->next[i];
@@ -251,24 +284,30 @@ long slmbx_destroy(unsigned int id)
       new[i]->next[i] = temp->next[i];
     }
     if(temp) {
-      free(temp->next);
-      free(temp);
+      kfree(temp->next);
+      kfree(temp);
     }
     while (list->level > 1 && list->shead->next[list->level] == list->shead) {
       list->level--;
       //success
+      mutex_unlock(&lock);
       return 0;
     }
   }
+  mutex_unlock(&lock);
   //mailbox not found
   return -ENOENT;
 }
 
 //Returns the number of messages in the mailbox identified by id if it exists and the user has permission to access it. Returns an appropriate error code on failure.
-long slmbx_count(unsigned int id)
+asmlinkage long slmbx_count(unsigned int id)
 {
   int i;
   node *temp = list->shead;
+  if (temp->protected != 0 || temp->uid != current_uid().val) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   //iterate to find the node before the greater id
   for (i=list->level; i>0; i--){
     while (temp->next[i] && temp->next[i]->id < id) {
@@ -277,23 +316,31 @@ long slmbx_count(unsigned int id)
   }
   //if id can't be found
   if(temp) {
+    mutex_unlock(&lock);
     return -ENOENT;
   }
   //if message queue is still empty
   else if (temp->msg->front == NULL && temp->msg->back == NULL) {
+    mutex_unlock(&lock);
     return -ESRCH;
   }
   else {
+    mutex_unlock(&lock);
     //if id found and queue not empty
     return temp->msg->front->length;
   }
 }
 
 //Sends a new message to the mailbox identified by id if it exists and the user has access to it. The message shall be read from the user-space pointer msg and shall be len bytes long. Returns 0 on success or an appropriate error code on failure.
-long slmbx_send(unsigned int id, const unsigned char *msg, unsigned int len)
+asmlinkage long slmbx_send(unsigned int id, const unsigned char *msg, unsigned int len)
 {
   int i;
+  unsigned int j;
   node *temp = list->shead;
+  if (temp->protected != 0 || temp->uid != current_uid().val) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   for(i=list->level; i>0; i--) {
     while (temp->next[i]->id < id) {
       temp = temp->next[i];
@@ -301,55 +348,66 @@ long slmbx_send(unsigned int id, const unsigned char *msg, unsigned int len)
   }
 
   if(temp->next[i]->id == id) {
-    Qnode *q = malloc(sizeof(Qnode));
+    Qnode *q = kmalloc(sizeof(Qnode),GFP_KERNEL);
     if (q == NULL) {
+      mutex_unlock(&lock);
       return -ENOMEM;
     }
     //send data
     if (len <= sizeof(msg)) {
-      q->data = malloc(sizeof(Qnode));
+      q->data = kmalloc(sizeof(Qnode),GFP_KERNEL);
       q->length = len;
       //assign each character at a time
-      unsigned int j;
       for (j=0; j<q->length; j++) {
 	q->data[i] = msg[i];
       }
     }
     else {
+      mutex_unlock(&lock);
       return -EINVAL;
     }
 
     q->next = NULL;
     //error if mailbox message not found
     if (temp->next[i]->msg == NULL) {
-      free(q);
+      kfree(q);
+      mutex_unlock(&lock);
       return -ENOENT;
     }
     //if message queue is empty, assign message
     if(temp->next[i]->msg->front == NULL && temp->next[i]->msg->back == NULL) {
       temp->next[i]->msg->front = q;
       temp->next[i]->msg->back = q;
+      mutex_unlock(&lock);
       return 0;
     }
     else if(temp->next[i]->msg->front == NULL || temp->next[i]->msg->back == NULL) {
-      free(q);
+      kfree(q);
+      mutex_unlock(&lock);
       return -ENOENT;
     }
     else {
       temp->next[1]->msg->back->next = q;
       temp->next[1]->msg->back = q;
+      mutex_unlock(&lock);
       return 0;
     }
   }
+  mutex_unlock(&lock);
   return -ENOENT;
 }
 
 
 //Reads the first message that is in the mailbox identified by id if it exists and the user has access to it, storing either the entire length of the message or len bytes to the user-space pointer msg, whichever is less.
-long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len)
+asmlinkage long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len)
 {
   int i;
   node *temp = list->shead;
+  Qnode *q = NULL;
+  if(temp->protected != 0 || temp->uid != current_uid().val) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   for(i=list->level; i>0; i--) {
     while (temp->next[i]->id < id) {
       temp = temp->next[i];
@@ -364,15 +422,17 @@ long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len)
   if(temp->id == id) {
     //check whether message is empty
     if (temp->msg == NULL) {
+      mutex_unlock(&lock);
       return -ENOENT;
     }
-    Qnode *q = NULL;
-    Qnode *head = NULL;
+    
     if(temp->msg->front == NULL && temp->msg->back == NULL) {
+      mutex_unlock(&lock);
       return -ESRCH;
     }
     else if(temp->msg->front == NULL || temp->msg->back == NULL) {
-      free(q);
+      kfree(q);
+      mutex_unlock(&lock);
       return -ENOMEM;
     }
     else {
@@ -391,20 +451,25 @@ long slmbx_recv(unsigned int id, unsigned char *msg, unsigned int len)
       }
       //if len is less than the message length, remove entire message
       if (len < temp->msg->front->length) {
-	temp->msg->front == NULL;
-	temp->msg->back == NULL;
+	temp->msg->front = NULL;
+	temp->msg->back = NULL;
 	temp->msg->front->length = 0;
       }
     }    
   }
+  mutex_unlock(&lock);
   return sizeof(temp->msg);
 }
 
 //Retrieves the length (in bytes) of the first message pending in the mailbox identified by id, if it exists and the user has access to it. Returns the number of bytes in the first pending message in the mailbox on success, or an appropriate error code on failure.
-long slmbx_length(unsigned int id)
+asmlinkage long slmbx_length(unsigned int id)
 {
   int i;
   node *temp = list->shead;
+  if (temp->protected != 0 || temp->uid != current_uid().val) {
+    return -EPERM;
+  }
+  mutex_lock(&lock);
   for(i=list->level; i>0; i--) {
     while (temp->next[i]->id < id) {
       temp = temp->next[i];
@@ -413,14 +478,16 @@ long slmbx_length(unsigned int id)
   temp = temp->next[1];
 
   if (temp == NULL || temp->id != id) {
+    mutex_unlock(&lock);
     return -EINVAL;
   }
   else {
+    mutex_unlock(&lock);
     return sizeof(temp->msg);
   }
 }
 
-
+/*
 int main() {
   seed_random(time(NULL));
   unsigned int random_num  = generate_random_int();
@@ -497,4 +564,4 @@ int main() {
   dump();
   return 0;
 }
-
+*/

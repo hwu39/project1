@@ -1,17 +1,22 @@
-SRCS = myList.c
-OBJS = $(SRCS:.c=.o)
-BIN = myList
-CFLAGS = -g
-LDFLAGS = -g
+#userspace .c makefile
 
-all: $(BIN)
+#SRCS = myList.c
+#OBJS = $(SRCS:.c=.o)
+#BIN = myList
+#CFLAGS = -g
+#LDFLAGS = -g
 
-%.o: %.c
-	$(CC) -c $< -o $@ $(CFLAGS)
+#all: $(BIN)
 
-$(BIN): $(OBJS)
-	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+#%.o: %.c
+#	$(CC) -c $< -o $@ $(CFLAGS)
 
-clean:
-	-rm -f $(OBJS)
-	-rm -f $(BIN)
+#$(BIN): $(OBJS)
+#	$(CC) -o $@ $(OBJS) $(LDFLAGS)
+
+#clean:
+#	-rm -f $(OBJS)
+#	-rm -f $(BIN)
+
+#kernel makefile
+obj-y := kernel_myList.o
